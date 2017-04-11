@@ -7,7 +7,7 @@ from wgetstyle import *
 
 debug=0
 #automagicly set to 115200 baud
-fast=1
+fast=0
 #1 is slow 0 is fastest 0.1 is the sweetspot
 timeout=0.01
 benchmark=1
@@ -17,16 +17,20 @@ try:
     device=sys.argv[1]
     dumpfile=sys.argv[2]
     baud=sys.argv[3]
+    start_addr=int(sys.argv[4], 0)
+    end_addr=int(sys.argv[5], 0)
+
     memf=open(dumpfile,'w')
 except:
     print 'Usage:'
-    print sys.argv[0]+' device dumpfile baud\n'
+    print sys.argv[0]+' device dumpfile baud start_addr end_addr\n'
     print 'Default baud should be 38400 maximum is 115200\n'
     quit()
 
 def send(ser,command):
     ser.write(command+"\n")
     inco=""
+    modus=""
     while 1:
         try:
             arr=ser.readline()
@@ -82,7 +86,7 @@ def init(device,baud,fast=fast):
 
 def parse(buff):
     hex=""
-    fooR=re.compile('[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]\s+(.+)\r')
+    fooR=re.compile(r'.+ = (..)')
     parsed=fooR.findall(buff)
     for line in parsed:
         hex=hex+re.sub(' ','',line)
@@ -94,65 +98,50 @@ def display_buffer(ser,num):
     foo,bar=send(ser,'B'+str(num))
     return parse(foo)
 
-def display_memory(ser,num1,num2):
-    #num1 xx, num2 yyyy
-    looped=0
+def display_memory(ser, addr):
     if debug>=1:
-        print 'D'+str(num1)+","+str(num2)+" - "
-    foo,bar=send(ser,'D'+str(num1)+","+str(num2))
+        print '+'+format(addr, 'x')+" - "
+    foo,bar=send(ser,'+'+format(addr, 'x'))
     parsed=parse(foo)
-    if len(parsed[1])==0:
-        print 'Got nothing trying again :/'
-        if looped>10:
-            print "Seems like we're stuck - quitting"
-            memf.close()
-            quit()
-        looped=looped+1
-        parsed=display_memory(ser,num1,num2)        
-    if len(parsed[1])!=512:
-        print 'Got the wrong size!!!!!!1111'
-        parsed=display_memory(ser,num1,num2)
     return parsed
 
-def dump_memory(ser,dumpfile):
+def dump_memory(ser,dumpfile, start_addr, end_addr):
     writing=1
     k=0
-    total=(64*128*512)/1024.0
+    total=(end_addr - start_addr)/1024.0
     stime=time.time() #start time
     print 'Starting memory dump'
-    for j in range(0,64):
-        for i in range(0,128):
-            k=k+1
-            zz=time.time()
-            mem=display_memory(ser,hex(j)[2:],hex(i*0x200)[2:])[1]
-            if benchmark==1:
-                size=(k*512)/1024.0
-                speed=round(512/(time.time()-zz),2)
-                percentage=round(100.0/total*size,2)
-                minleft=round((time.time()-stime)/k*(247*128-k)/60,2)
-		if debug==0:
-                    progress_bar(time.time()-stime,size*1024,total*1024)
-		elif debug>0:
-                    print 'time:'+str(time.time()-stime)
-                    print 'size:'+str(size)
-                    print 'total:'+str(total)
-            memf.write(mem)
-    memf.close()
-    writing=0
+    addr = start_addr
+    while addr < end_addr:
+        k=k+1
+        zz=time.time()
+        retries=0
+        while retries < 5:
+            parsed=display_memory(ser,addr)
+            if len(parsed[1])!=1:
+                print 'Got the wrong size!!!!!! %d of %s' % (len(parsed[1]), parsed[1])
+                retries = retries + 1
+                continue
+            else:
+                break
+        if len(parsed[1])!=1:
+            print 'FATAL unable to read'
+            sys.exit(1)
 
-def dump_buffer(ser,dumpfile):
-    writing=1
-    k=0
-    total=(65535*512)/1024.0
-    stime=time.time() #start time
-    for i in range(0,65535):
-         k=k+1  
-         zz=time.time()
-         mem=display_buffer(ser,hex(i)[2:])[1]
-         size=(k*512)/1024.0
-         if benchmark==1:
-             progress_bar(time.time()-stime,size*1024,total*1024)
-         memf.write(mem)
+        mem=parsed[1]
+        addr = addr + 1
+        if benchmark==1:
+            size=k/1024.0
+            speed=round(512/(time.time()-zz),2)
+            percentage=round(100.0/total*size,2)
+            minleft=round((time.time()-stime)/k*(247*128-k)/60,2)
+            if debug==0:
+                progress_bar(time.time()-stime,size*1024,total*1024)
+            elif debug>0:
+                print 'time:'+str(time.time()-stime)
+                print 'size:'+str(size)
+                print 'total:'+str(total)
+        memf.write(mem)
     memf.close()
     writing=0
 
@@ -169,7 +158,6 @@ except:
 if modus!="1":
      print 'Somethings not right here'
      quit()
-#print display_memory(ser,'15','C000')
-dump_memory(ser,dumpfile)
-#dump_buffer(ser,dumpfile)
+dump_memory(ser,dumpfile,start_addr,end_addr)
+
 print 
